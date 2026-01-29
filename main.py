@@ -103,7 +103,7 @@ class LinuxDoBrowser:
 
     def login(self):
         logger.info("开始登录")
-        # Step 1: Get CSRF Token
+        # Step 1: Get CSRF Token (带重试)
         logger.info("获取 CSRF token...")
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
@@ -112,10 +112,37 @@ class LinuxDoBrowser:
             "X-Requested-With": "XMLHttpRequest",
             "Referer": LOGIN_URL,
         }
-        resp_csrf = self.session.get(CSRF_URL, headers=headers, impersonate="chrome136")
-        csrf_data = resp_csrf.json()
-        csrf_token = csrf_data.get("csrf")
-        logger.info(f"CSRF Token obtained: {csrf_token[:10]}...")
+
+        csrf_token = None
+        for attempt in range(3):
+            try:
+                resp_csrf = self.session.get(CSRF_URL, headers=headers, impersonate="chrome136")
+
+                if resp_csrf.status_code != 200:
+                    logger.warning(f"获取 CSRF token 失败，状态码: {resp_csrf.status_code}，第 {attempt + 1}/3 次")
+                    if attempt < 2:
+                        time.sleep(random.uniform(5, 10))
+                    continue
+
+                csrf_data = resp_csrf.json()
+                csrf_token = csrf_data.get("csrf")
+
+                if csrf_token:
+                    logger.info(f"CSRF Token obtained: {csrf_token[:10]}...")
+                    break
+                else:
+                    logger.warning(f"CSRF token 为空，第 {attempt + 1}/3 次")
+                    if attempt < 2:
+                        time.sleep(random.uniform(5, 10))
+
+            except Exception as e:
+                logger.warning(f"获取 CSRF token 异常: {e}，第 {attempt + 1}/3 次")
+                if attempt < 2:
+                    time.sleep(random.uniform(5, 10))
+
+        if not csrf_token:
+            logger.error("获取 CSRF token 最终失败，无法登录")
+            return False
 
         # Step 2: Login
         logger.info("正在登录...")
@@ -140,14 +167,19 @@ class LinuxDoBrowser:
             )
 
             if resp_login.status_code == 200:
-                response_json = resp_login.json()
+                try:
+                    response_json = resp_login.json()
+                except Exception as e:
+                    logger.error(f"登录响应不是有效 JSON: {resp_login.text[:200]}")
+                    return False
+
                 if response_json.get("error"):
                     logger.error(f"登录失败: {response_json.get('error')}")
                     return False
                 logger.info("登录成功!")
             else:
                 logger.error(f"登录失败，状态码: {resp_login.status_code}")
-                logger.error(resp_login.text)
+                logger.error(resp_login.text[:200] if resp_login.text else "空响应")
                 return False
         except Exception as e:
             logger.error(f"登录请求异常: {e}")
@@ -206,8 +238,9 @@ class LinuxDoBrowser:
         if not topic_list:
             logger.error("未找到主题帖")
             return False
-        logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择10个")
-        for topic in random.sample(topic_list, 10):
+        sample_count = min(10, len(topic_list))
+        logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择 {sample_count} 个")
+        for topic in random.sample(topic_list, sample_count):
             self.click_one_topic(topic.attr("href"))
         return True
 
@@ -258,17 +291,18 @@ class LinuxDoBrowser:
     def run(self):
         try:
             login_res = self.login()
-            if not login_res:  # 登录
-                logger.warning("登录验证失败")
+            if not login_res:
+                logger.error("登录失败，程序终止")
+                sys.exit(1)
 
             if BROWSE_ENABLED:
-                click_topic_res = self.click_topic()  # 点击主题
+                click_topic_res = self.click_topic()
                 if not click_topic_res:
                     logger.error("点击主题失败，程序终止")
-                    return
+                    sys.exit(1)
                 logger.info("完成浏览任务")
 
-            self.send_notifications(BROWSE_ENABLED)  # 发送通知
+            self.send_notifications(BROWSE_ENABLED)
         finally:
             try:
                 self.page.close()
@@ -298,23 +332,30 @@ class LinuxDoBrowser:
         headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         }
-        resp = self.session.get(
-            "https://connect.linux.do/", headers=headers, impersonate="chrome136"
-        )
-        soup = BeautifulSoup(resp.text, "html.parser")
-        rows = soup.select("table tr")
-        info = []
+        try:
+            resp = self.session.get(
+                "https://connect.linux.do/", headers=headers, impersonate="chrome136"
+            )
+            if resp.status_code != 200:
+                logger.warning(f"获取连接信息失败，状态码: {resp.status_code}")
+                return
 
-        for row in rows:
-            cells = row.select("td")
-            if len(cells) >= 3:
-                project = cells[0].text.strip()
-                current = cells[1].text.strip() if cells[1].text.strip() else "0"
-                requirement = cells[2].text.strip() if cells[2].text.strip() else "0"
-                info.append([project, current, requirement])
+            soup = BeautifulSoup(resp.text, "html.parser")
+            rows = soup.select("table tr")
+            info = []
 
-        print("--------------Connect Info-----------------")
-        print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+            for row in rows:
+                cells = row.select("td")
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip() if cells[1].text.strip() else "0"
+                    requirement = cells[2].text.strip() if cells[2].text.strip() else "0"
+                    info.append([project, current, requirement])
+
+            print("--------------Connect Info-----------------")
+            print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+        except Exception as e:
+            logger.warning(f"获取连接信息异常: {e}")
 
     def send_notifications(self, browse_enabled):
         status_msg = f"✅每日登录成功: {USERNAME}"
