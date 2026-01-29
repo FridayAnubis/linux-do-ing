@@ -320,6 +320,13 @@ class LinuxDoBrowser:
         self.page.get(LATEST_URL)
         time.sleep(3)
 
+        # 检测 CF 5秒盾
+        if self.check_cf_challenge(self.page):
+            logger.warning("首页触发 CF 验证，等待通过...")
+            if not self.wait_cf_challenge(self.page):
+                self.error_message = "无法通过 CF 验证"
+                return False
+
         topic_list = self.page.ele("@id=list-area").eles(".:title")
         if not topic_list:
             self.error_message = "未找到主题帖"
@@ -333,13 +340,58 @@ class LinuxDoBrowser:
         for i, topic in enumerate(topic_list[:browse_count]):
             logger.info(f"浏览第 {i + 1}/{browse_count} 个帖子")
             self.click_one_topic(topic.attr("href"))
+
+            # 帖子之间添加随机延迟，避免触发 CF 5秒盾
+            if i < browse_count - 1:
+                delay = random.uniform(5, 15)
+                logger.info(f"等待 {delay:.1f} 秒后浏览下一个帖子...")
+                time.sleep(delay)
+
         return True
+
+    def check_cf_challenge(self, page):
+        """检测是否触发 Cloudflare 5秒盾"""
+        try:
+            title = page.title.lower() if page.title else ""
+            html = page.html.lower() if page.html else ""
+            # 检测 CF 验证页面特征
+            cf_indicators = [
+                "just a moment" in title,
+                "checking your browser" in html,
+                "cloudflare" in html and "challenge" in html,
+                "cf-browser-verification" in html,
+                "_cf_chl" in html
+            ]
+            return any(cf_indicators)
+        except:
+            return False
+
+    def wait_cf_challenge(self, page, timeout=30):
+        """等待 CF 验证通过"""
+        logger.info(f"等待 CF 验证通过（最多 {timeout} 秒）...")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            time.sleep(2)
+            if not self.check_cf_challenge(page):
+                logger.success("CF 验证已通过")
+                return True
+            logger.info("仍在等待 CF 验证...")
+        logger.error("CF 验证超时")
+        return False
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
         new_page = self.browser.new_tab()
         try:
             new_page.get(topic_url)
+
+            # 检测 CF 5秒盾
+            if self.check_cf_challenge(new_page):
+                logger.warning("帖子页面触发 CF 验证，等待通过...")
+                if not self.wait_cf_challenge(new_page):
+                    logger.error("CF 验证失败，跳过此帖子")
+                    return
+
             self.browse_count += 1
             if random.random() < 0.3:
                 self.click_like(new_page)
