@@ -48,46 +48,89 @@
 
 点击本仓库右上角的 `Fork` 按钮，将仓库 Fork 到你的账号下。
 
-### 4.2 配置 Secrets
+### 4.2 配置 Secrets（重要）
 
-1. 进入你 Fork 的仓库
-2. 点击 `Settings`（设置）
-3. 在左侧菜单找到 `Secrets and variables` -> `Actions`
-4. 点击 `New repository secret` 添加以下变量：
+> ⚠️ **注意**：环境变量必须添加到 **"秘密"（Secrets）** 中，而不是 "变量"（Variables）！
+>
+> GitHub 设置页面有两个选项卡：**"秘密"** 和 **"变量"**。请确保选择 **"秘密"** 选项卡！
 
-**必填：**
-- `LINUXDO_USERNAME`：你的 LinuxDo 用户名或邮箱
-- `LINUXDO_PASSWORD`：你的 LinuxDo 密码
+**详细步骤：**
 
-**可选（通知功能）：**
-- `TELEGRAM_TOKEN`：Telegram Bot Token
-- `TELEGRAM_USERID`：Telegram 用户 ID
-- `GOTIFY_URL`：Gotify 服务器地址
-- `GOTIFY_TOKEN`：Gotify 应用 Token
-- `SC3_PUSH_KEY`：Server酱³ SendKey
-- `WXPUSH_URL`：wxpush 服务器地址
-- `WXPUSH_TOKEN`：wxpush Token
-- `BROWSE_ENABLED`：是否启用浏览帖子（默认 true）
+1. 进入你 Fork 的仓库页面
+2. 点击顶部的 **`Settings`**（设置）
+3. 在左侧菜单找到 **`Secrets and variables`**（秘密与变量）
+4. 点击展开后选择 **`Actions`**
+5. 你会看到页面上有两个选项卡：**"秘密"** 和 **"变量"**
+6. **确保选择 "秘密" 选项卡**（默认应该就是）
+7. 在 **"存储库密钥"** 区域，点击右侧的 **`新存储库密钥`** 按钮
+8. 填写 **Name**（名称）和 **Secret**（值），然后点击 **`Add secret`**
+
+**需要添加的 Secrets：**
+
+| Name（名称） | Secret（值） | 必填 |
+|-------------|-------------|------|
+| `LINUXDO_USERNAME` | 你的 LinuxDo 用户名或邮箱 | ✅ 必填 |
+| `LINUXDO_PASSWORD` | 你的 LinuxDo 密码 | ✅ 必填 |
+| `TELEGRAM_TOKEN` | Telegram Bot Token | 可选 |
+| `TELEGRAM_USERID` | Telegram 用户 ID | 可选 |
+| `GOTIFY_URL` | Gotify 服务器地址 | 可选 |
+| `GOTIFY_TOKEN` | Gotify 应用 Token | 可选 |
+| `SC3_PUSH_KEY` | Server酱³ SendKey | 可选 |
+| `WXPUSH_URL` | wxpush 服务器地址 | 可选 |
+| `WXPUSH_TOKEN` | wxpush Token | 可选 |
+| `BROWSE_ENABLED` | 是否启用浏览帖子（默认 true） | 可选 |
+
+**添加完成后的效果：**
+
+在 "存储库密钥" 列表中应该能看到你添加的所有密钥，例如：
+```
+LINUXDO_PASSWORD    刚刚
+LINUXDO_USERNAME    刚刚
+TELEGRAM_TOKEN      刚刚
+TELEGRAM_USERID     刚刚
+```
 
 ### 4.3 启用 Actions
 
-1. 进入仓库的 `Actions` 选项卡
-2. 如果看到提示，点击 `I understand my workflows, go ahead and enable them`
+1. 进入仓库的 **`Actions`** 选项卡
+2. 如果看到提示，点击 **`I understand my workflows, go ahead and enable them`**
 3. 工作流会自动每 12 小时运行一次
 
 ### 4.4 手动触发
 
-1. 进入 `Actions` 选项卡
-2. 选择 `Daily Check-in` 工作流
-3. 点击 `Run workflow` 按钮
-4. 选择分支，点击 `Run workflow` 启动
+1. 进入 **`Actions`** 选项卡
+2. 在左侧选择 **`Daily Check-in`** 工作流
+3. 点击右侧的 **`Run workflow`** 按钮
+4. 选择分支（默认 main），点击绿色的 **`Run workflow`** 按钮启动
 
 ### 4.5 查看运行结果
 
-1. 进入 `Actions` 选项卡
-2. 点击最新的 `Daily Check-in` 运行记录
-3. 点击 `run_script` -> `Execute script`
-4. 可以看到 `Connect Info` 表格显示升级进度
+1. 进入 **`Actions`** 选项卡
+2. 点击最新的 **`Daily Check-in`** 运行记录
+3. 点击 **`run_script`**
+4. 展开 **`Execute script`** 步骤
+
+可以看到 `Connect Info` 表格显示升级进度：
+
+```
+--------------Connect Info-----------------
++------------------------+------------------------+----------+
+|          项目          |          当前          |   要求   |
++------------------------+------------------------+----------+
+|        访问次数        |   96% (96 / 100 天数)  |   50%    |
+|      回复的话题        |          ≥ 2          |    10    |
+|      浏览的话题        |          2368          |   500    |
+|  浏览的话题（所有时间）|          2612          |   200    |
+|        已读帖子        |          6053          |  20000   |
+|  已读帖子（所有时间）  |          6852          |   500    |
+|      被举报的帖子      |           0            | 最多 5 个|
+|     发起举报的用户     |           0            | 最多 5 个|
+|          点赞          |           67           |    30    |
+|          获赞          |           1            |    20    |
++------------------------+------------------------+----------+
+```
+
+> 注：新号可能这里为空，多挂几天就有了。
 
 ## 五、青龙面板使用
 
