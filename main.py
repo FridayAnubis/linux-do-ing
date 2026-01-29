@@ -65,6 +65,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_USERID = os.environ.get("TELEGRAM_USERID")
 
 HOME_URL = "https://linux.do/"
+LATEST_URL = "https://linux.do/latest"
 LOGIN_URL = "https://linux.do/login"
 SESSION_URL = "https://linux.do/session"
 CSRF_URL = "https://linux.do/session/csrf"
@@ -314,14 +315,23 @@ class LinuxDoBrowser:
             logger.warning(f"获取连接信息异常: {e}")
 
     def click_topic(self):
+        # 导航到最新帖子页面
+        logger.info("导航到最新帖子页面...")
+        self.page.get(LATEST_URL)
+        time.sleep(3)
+
         topic_list = self.page.ele("@id=list-area").eles(".:title")
         if not topic_list:
             self.error_message = "未找到主题帖"
             logger.error(self.error_message)
             return False
-        sample_count = min(10, len(topic_list))
-        logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择 {sample_count} 个")
-        for topic in random.sample(topic_list, sample_count):
+
+        browse_count = min(10, len(topic_list))
+        logger.info(f"发现 {len(topic_list)} 个最新帖子，按顺序浏览前 {browse_count} 个")
+
+        # 按顺序浏览（不再随机）
+        for i, topic in enumerate(topic_list[:browse_count]):
+            logger.info(f"浏览第 {i + 1}/{browse_count} 个帖子")
             self.click_one_topic(topic.attr("href"))
         return True
 
