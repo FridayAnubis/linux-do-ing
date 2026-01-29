@@ -56,16 +56,19 @@ if not USERNAME:
     USERNAME = os.environ.get("USERNAME")
 if not PASSWORD:
     PASSWORD = os.environ.get("PASSWORD")
-GOTIFY_URL = os.environ.get("GOTIFY_URL")  # Gotify 服务器地址
-GOTIFY_TOKEN = os.environ.get("GOTIFY_TOKEN")  # Gotify 应用的 API Token
-SC3_PUSH_KEY = os.environ.get("SC3_PUSH_KEY")  # Server酱³ SendKey
-WXPUSH_URL = os.environ.get("WXPUSH_URL")  # wxpush 服务器地址
-WXPUSH_TOKEN = os.environ.get("WXPUSH_TOKEN")  # wxpush 的 token
+GOTIFY_URL = os.environ.get("GOTIFY_URL")
+GOTIFY_TOKEN = os.environ.get("GOTIFY_TOKEN")
+SC3_PUSH_KEY = os.environ.get("SC3_PUSH_KEY")
+WXPUSH_URL = os.environ.get("WXPUSH_URL")
+WXPUSH_TOKEN = os.environ.get("WXPUSH_TOKEN")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_USERID = os.environ.get("TELEGRAM_USERID")
 
 HOME_URL = "https://linux.do/"
 LOGIN_URL = "https://linux.do/login"
 SESSION_URL = "https://linux.do/session"
 CSRF_URL = "https://linux.do/session/csrf"
+CONNECT_URL = "https://connect.linux.do/"
 
 
 class LinuxDoBrowser:
@@ -100,6 +103,21 @@ class LinuxDoBrowser:
                 "Accept-Language": "zh-CN,zh;q=0.9",
             }
         )
+
+        # 统计计数器
+        self.browse_count = 0
+        self.like_count = 0
+        self.read_comments_count = 0
+
+        # 用户信息
+        self.display_name = ""
+        self.user_id = ""
+        self.user_level = 0
+        self.next_level = 0
+        self.progress_data = []
+
+        # 错误信息
+        self.error_message = ""
 
     def login(self):
         logger.info("开始登录")
@@ -141,7 +159,8 @@ class LinuxDoBrowser:
                     time.sleep(random.uniform(5, 10))
 
         if not csrf_token:
-            logger.error("获取 CSRF token 最终失败，无法登录")
+            self.error_message = "获取 CSRF token 最终失败"
+            logger.error(self.error_message)
             return False
 
         # Step 2: Login
@@ -170,34 +189,29 @@ class LinuxDoBrowser:
                 try:
                     response_json = resp_login.json()
                 except Exception as e:
-                    logger.error(f"登录响应不是有效 JSON: {resp_login.text[:200]}")
+                    self.error_message = f"登录响应不是有效 JSON: {resp_login.text[:100]}"
+                    logger.error(self.error_message)
                     return False
 
                 if response_json.get("error"):
-                    logger.error(f"登录失败: {response_json.get('error')}")
+                    self.error_message = f"登录失败: {response_json.get('error')}"
+                    logger.error(self.error_message)
                     return False
                 logger.info("登录成功!")
             else:
-                logger.error(f"登录失败，状态码: {resp_login.status_code}")
-                logger.error(resp_login.text[:200] if resp_login.text else "空响应")
+                self.error_message = f"登录失败，状态码: {resp_login.status_code}"
+                logger.error(self.error_message)
                 return False
         except Exception as e:
-            logger.error(f"登录请求异常: {e}")
+            self.error_message = f"登录请求异常: {e}"
+            logger.error(self.error_message)
             return False
 
-        self.print_connect_info()  # 打印连接信息
+        # 获取连接信息（等级和升级进度）
+        self.fetch_connect_info()
 
         # Step 3: Pass cookies to DrissionPage
         logger.info("同步 Cookie 到 DrissionPage...")
-
-        # Convert requests cookies to DrissionPage format
-        # Using standard requests.utils to parse cookiejar if possible, or manual extraction
-        # requests.Session().cookies is a specialized object, but might support standard iteration
-
-        # We can iterate over the cookies manually if dict_from_cookiejar doesn't work perfectly
-        # or convert to dict first.
-        # Assuming requests behaves like requests:
-
         cookies_dict = self.session.cookies.get_dict()
 
         dp_cookies = []
@@ -223,20 +237,87 @@ class LinuxDoBrowser:
             logger.warning(f"登录验证失败: {str(e)}")
             return True
         if not user_ele:
-            # Fallback check for avatar
             if "avatar" in self.page.html:
                 logger.info("登录验证成功 (通过 avatar)")
                 return True
-            logger.error("登录验证失败 (未找到 current-user)")
+            self.error_message = "登录验证失败 (未找到 current-user)"
+            logger.error(self.error_message)
             return False
         else:
             logger.info("登录验证成功")
             return True
 
+    def fetch_connect_info(self):
+        """获取 connect.linux.do 的用户等级和升级进度"""
+        logger.info("获取连接信息...")
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        }
+        try:
+            resp = self.session.get(CONNECT_URL, headers=headers, impersonate="chrome136")
+            if resp.status_code != 200:
+                logger.warning(f"获取连接信息失败，状态码: {resp.status_code}")
+                return
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # 解析用户等级: "你好，TC烈火 (lhwd) 2级用户"
+            h1 = soup.select_one("h1")
+            if h1:
+                h1_text = h1.get_text(strip=True)
+                # 提取显示名和用户ID
+                match = re.search(r"你好，(.+?)\s*\((\w+)\)\s*(\d+)级用户", h1_text)
+                if match:
+                    self.display_name = match.group(1)
+                    self.user_id = match.group(2)
+                    self.user_level = int(match.group(3))
+                    self.next_level = self.user_level + 1
+                    logger.info(f"用户: {self.display_name} ({self.user_id}) {self.user_level}级")
+
+            # 解析升级进度表格
+            h2 = soup.select_one("h2")
+            if h2:
+                h2_text = h2.get_text(strip=True)
+                # 提取目标等级: "lhwd - 信任级别 3 的要求"
+                match = re.search(r"信任级别\s*(\d+)\s*的要求", h2_text)
+                if match:
+                    self.next_level = int(match.group(1))
+
+            # 解析表格数据
+            rows = soup.select("table tr")
+            info = []
+            for row in rows:
+                cells = row.select("td")
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current_cell = cells[1]
+                    current = current_cell.text.strip() if current_cell.text.strip() else "0"
+                    requirement = cells[2].text.strip() if cells[2].text.strip() else "0"
+                    # 检查是否达标 (绿色 = 达标)
+                    is_completed = "text-green-500" in current_cell.get("class", [])
+                    info.append({
+                        "project": project,
+                        "current": current,
+                        "requirement": requirement,
+                        "completed": is_completed
+                    })
+
+            self.progress_data = info
+
+            # 打印表格
+            if info:
+                print("--------------Connect Info-----------------")
+                table_data = [[item["project"], item["current"], item["requirement"]] for item in info]
+                print(tabulate(table_data, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+
+        except Exception as e:
+            logger.warning(f"获取连接信息异常: {e}")
+
     def click_topic(self):
         topic_list = self.page.ele("@id=list-area").eles(".:title")
         if not topic_list:
-            logger.error("未找到主题帖")
+            self.error_message = "未找到主题帖"
+            logger.error(self.error_message)
             return False
         sample_count = min(10, len(topic_list))
         logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择 {sample_count} 个")
@@ -249,7 +330,8 @@ class LinuxDoBrowser:
         new_page = self.browser.new_tab()
         try:
             new_page.get(topic_url)
-            if random.random() < 0.3:  # 0.3 * 30 = 9
+            self.browse_count += 1
+            if random.random() < 0.3:
                 self.click_like(new_page)
             self.browse_post(new_page)
         finally:
@@ -260,19 +342,37 @@ class LinuxDoBrowser:
 
     def browse_post(self, page):
         prev_url = None
+        prev_comment_count = 0
+
+        # 获取初始评论数
+        try:
+            comments = page.eles(".post-stream .topic-post")
+            prev_comment_count = len(comments) if comments else 0
+        except:
+            pass
+
         # 开始自动滚动，最多滚动10次
         for _ in range(10):
-            # 随机滚动一段距离
-            scroll_distance = random.randint(550, 650)  # 随机滚动 550-650 像素
+            scroll_distance = random.randint(550, 650)
             logger.info(f"向下滚动 {scroll_distance} 像素...")
             page.run_js(f"window.scrollBy(0, {scroll_distance})")
             logger.info(f"已加载页面: {page.url}")
 
-            if random.random() < 0.03:  # 33 * 4 = 132
+            # 统计新加载的评论
+            try:
+                comments = page.eles(".post-stream .topic-post")
+                current_comment_count = len(comments) if comments else 0
+                new_comments = current_comment_count - prev_comment_count
+                if new_comments > 0:
+                    self.read_comments_count += new_comments
+                    prev_comment_count = current_comment_count
+            except:
+                pass
+
+            if random.random() < 0.03:
                 logger.success("随机退出浏览")
                 break
 
-            # 检查是否到达页面底部
             at_bottom = page.run_js(
                 "window.scrollY + window.innerHeight >= document.body.scrollHeight"
             )
@@ -283,43 +383,17 @@ class LinuxDoBrowser:
                 logger.success("已到达页面底部，退出浏览")
                 break
 
-            # 动态随机等待
-            wait_time = random.uniform(2, 4)  # 随机等待 2-4 秒
+            wait_time = random.uniform(2, 4)
             logger.info(f"等待 {wait_time:.2f} 秒...")
             time.sleep(wait_time)
 
-    def run(self):
-        try:
-            login_res = self.login()
-            if not login_res:
-                logger.error("登录失败，程序终止")
-                sys.exit(1)
-
-            if BROWSE_ENABLED:
-                click_topic_res = self.click_topic()
-                if not click_topic_res:
-                    logger.error("点击主题失败，程序终止")
-                    sys.exit(1)
-                logger.info("完成浏览任务")
-
-            self.send_notifications(BROWSE_ENABLED)
-        finally:
-            try:
-                self.page.close()
-            except Exception:
-                pass
-            try:
-                self.browser.quit()
-            except Exception:
-                pass
-
     def click_like(self, page):
         try:
-            # 专门查找未点赞的按钮
             like_button = page.ele(".discourse-reactions-reaction-button")
             if like_button:
                 logger.info("找到未点赞的帖子，准备点赞")
                 like_button.click()
+                self.like_count += 1
                 logger.info("点赞成功")
                 time.sleep(random.uniform(1, 2))
             else:
@@ -327,41 +401,133 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"点赞失败: {str(e)}")
 
-    def print_connect_info(self):
-        logger.info("获取连接信息")
-        headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        }
+    def build_telegram_message(self, success=True):
+        """构建 Telegram 通知消息"""
+        if success:
+            msg = f"✅ <b>LINUX DO 签到成功</b>\n"
+            msg += f"👤 {self.display_name} ({self.user_id})\n" if self.display_name else f"👤 {USERNAME}\n"
+            msg += "\n"
+
+            # 执行统计
+            msg += "📊 <b>执行统计</b>\n"
+            msg += f"├ 📖 浏览：{self.browse_count} 篇\n"
+            msg += f"├ 💬 阅读评论：{self.read_comments_count} 条\n"
+            msg += f"├ 👍 点赞：{self.like_count} 次\n"
+            msg += f"├ 📝 发帖：0 篇\n"
+            msg += f"└ ✍️ 评论：0 条\n"
+            msg += "\n"
+
+            # 当前等级
+            if self.user_level > 0:
+                msg += f"🏆 <b>当前等级：{self.user_level} 级</b>\n"
+            else:
+                msg += f"🏆 <b>当前等级：未知</b>\n"
+            msg += "\n"
+
+            # 升级进度（仅 2 级及以上用户显示）
+            if self.progress_data and self.user_level >= 2:
+                msg += f"📈 <b>升级进度 ({self.user_level}→{self.next_level}级)</b>\n"
+
+                # 选择关键指标显示
+                key_items = ["访问次数", "回复的话题", "浏览的话题", "已读帖子", "点赞", "获赞"]
+                displayed = 0
+                completed_count = 0
+                total_count = 0
+
+                for item in self.progress_data:
+                    project = item["project"]
+                    # 跳过"所有时间"和惩罚相关项目
+                    if "所有时间" in project or "举报" in project or "禁言" in project or "封禁" in project:
+                        continue
+
+                    total_count += 1
+                    if item["completed"]:
+                        completed_count += 1
+
+                    # 只显示关键指标
+                    if any(key in project for key in key_items):
+                        icon = "✅" if item["completed"] else "⏳"
+                        current = item["current"]
+                        requirement = item["requirement"]
+
+                        # 计算差值
+                        diff_str = ""
+                        if not item["completed"]:
+                            try:
+                                # 尝试提取数字计算差值
+                                curr_num = int(re.search(r"(\d+)", current).group(1))
+                                req_num = int(re.search(r"(\d+)", requirement).group(1))
+                                if "%" in current:
+                                    diff_str = f" (差 {req_num - curr_num}%)"
+                                else:
+                                    diff_str = f" (差 {req_num - curr_num})"
+                            except:
+                                pass
+
+                        connector = "├" if displayed < 5 else "└"
+                        msg += f"{connector} {icon} {project}：{current} / {requirement}{diff_str}\n"
+                        displayed += 1
+
+                msg += "\n"
+
+                # 完成度
+                if total_count > 0:
+                    percentage = int(completed_count / total_count * 100)
+                    filled = completed_count
+                    empty = total_count - completed_count
+                    progress_bar = "🟩" * filled + "⬜" * empty
+                    msg += f"🎯 <b>完成度 {percentage}%</b>\n"
+                    msg += f"{progress_bar}\n"
+                    msg += f"已完成 {completed_count}/{total_count} 项"
+            elif self.user_level == 1:
+                msg += "📈 <b>升级进度</b>\n"
+                msg += "ℹ️ 1级用户暂无升级进度数据\n"
+                msg += "继续活跃即可升级到2级"
+        else:
+            msg = f"❌ <b>LINUX DO 签到失败</b>\n"
+            msg += f"👤 {USERNAME}\n"
+            msg += "\n"
+            msg += f"⚠️ <b>错误原因</b>\n"
+            msg += f"{self.error_message}"
+
+        return msg
+
+    def send_telegram(self, message):
+        """发送 Telegram 通知"""
+        if not TELEGRAM_TOKEN or not TELEGRAM_USERID:
+            logger.info("未配置 Telegram 环境变量，跳过通知发送")
+            return
+
         try:
-            resp = self.session.get(
-                "https://connect.linux.do/", headers=headers, impersonate="chrome136"
-            )
-            if resp.status_code != 200:
-                logger.warning(f"获取连接信息失败，状态码: {resp.status_code}")
-                return
-
-            soup = BeautifulSoup(resp.text, "html.parser")
-            rows = soup.select("table tr")
-            info = []
-
-            for row in rows:
-                cells = row.select("td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip() if cells[1].text.strip() else "0"
-                    requirement = cells[2].text.strip() if cells[2].text.strip() else "0"
-                    info.append([project, current, requirement])
-
-            print("--------------Connect Info-----------------")
-            print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            data = {
+                "chat_id": TELEGRAM_USERID,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            response = requests.post(url, data=data, timeout=10)
+            if response.status_code == 200:
+                logger.success("Telegram 通知发送成功")
+            else:
+                logger.error(f"Telegram 通知发送失败: {response.text}")
         except Exception as e:
-            logger.warning(f"获取连接信息异常: {e}")
+            logger.error(f"Telegram 通知发送异常: {e}")
 
-    def send_notifications(self, browse_enabled):
-        status_msg = f"✅每日登录成功: {USERNAME}"
-        if browse_enabled:
-            status_msg += " + 浏览任务完成"
+    def send_notifications(self, success=True):
+        """发送所有通知"""
+        # Telegram 通知
+        tg_message = self.build_telegram_message(success)
+        self.send_telegram(tg_message)
 
+        # 简单状态消息（用于其他通知渠道）
+        if success:
+            status_msg = f"✅每日登录成功: {USERNAME}"
+            if BROWSE_ENABLED:
+                status_msg += f" | 浏览:{self.browse_count} 点赞:{self.like_count}"
+        else:
+            status_msg = f"❌签到失败: {self.error_message}"
+
+        # Gotify 通知
         if GOTIFY_URL and GOTIFY_TOKEN:
             try:
                 response = requests.post(
@@ -374,35 +540,29 @@ class LinuxDoBrowser:
                 logger.success("消息已推送至Gotify")
             except Exception as e:
                 logger.error(f"Gotify推送失败: {str(e)}")
-        else:
-            logger.info("未配置Gotify环境变量，跳过通知发送")
 
+        # Server酱³ 通知
         if SC3_PUSH_KEY:
             match = re.match(r"sct(\d+)t", SC3_PUSH_KEY, re.I)
             if not match:
-                logger.error(
-                    "❌ SC3_PUSH_KEY格式错误，未获取到UID，无法使用Server酱³推送"
-                )
-                return
+                logger.error("❌ SC3_PUSH_KEY格式错误，未获取到UID，无法使用Server酱³推送")
+            else:
+                uid = match.group(1)
+                url = f"https://{uid}.push.ft07.com/send/{SC3_PUSH_KEY}"
+                params = {"title": "LINUX DO", "desp": status_msg}
 
-            uid = match.group(1)
-            url = f"https://{uid}.push.ft07.com/send/{SC3_PUSH_KEY}"
-            params = {"title": "LINUX DO", "desp": status_msg}
+                for attempt in range(3):
+                    try:
+                        response = requests.get(url, params=params, timeout=10)
+                        response.raise_for_status()
+                        logger.success(f"Server酱³推送成功")
+                        break
+                    except Exception as e:
+                        logger.error(f"Server酱³推送失败: {str(e)}")
+                        if attempt < 2:
+                            time.sleep(random.randint(5, 10))
 
-            attempts = 5
-            for attempt in range(attempts):
-                try:
-                    response = requests.get(url, params=params, timeout=10)
-                    response.raise_for_status()
-                    logger.success(f"Server酱³推送成功: {response.text}")
-                    break
-                except Exception as e:
-                    logger.error(f"Server酱³推送失败: {str(e)}")
-                    if attempt < attempts - 1:
-                        sleep_time = random.randint(180, 360)
-                        logger.info(f"将在 {sleep_time} 秒后重试...")
-                        time.sleep(sleep_time)
-
+        # wxpush 通知
         if WXPUSH_URL and WXPUSH_TOKEN:
             try:
                 response = requests.post(
@@ -415,11 +575,36 @@ class LinuxDoBrowser:
                     timeout=10,
                 )
                 response.raise_for_status()
-                logger.success(f"wxpush 推送成功: {response.text}")
+                logger.success(f"wxpush 推送成功")
             except Exception as e:
                 logger.error(f"wxpush 推送失败: {str(e)}")
-        else:
-            logger.info("未配置 WXPUSH_URL 或 WXPUSH_TOKEN，跳过通知发送")
+
+    def run(self):
+        try:
+            login_res = self.login()
+            if not login_res:
+                logger.error("登录失败，程序终止")
+                self.send_notifications(success=False)
+                sys.exit(1)
+
+            if BROWSE_ENABLED:
+                click_topic_res = self.click_topic()
+                if not click_topic_res:
+                    logger.error("点击主题失败，程序终止")
+                    self.send_notifications(success=False)
+                    sys.exit(1)
+                logger.info("完成浏览任务")
+
+            self.send_notifications(success=True)
+        finally:
+            try:
+                self.page.close()
+            except Exception:
+                pass
+            try:
+                self.browser.quit()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
