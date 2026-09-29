@@ -63,6 +63,7 @@ WXPUSH_URL = os.environ.get("WXPUSH_URL")
 WXPUSH_TOKEN = os.environ.get("WXPUSH_TOKEN")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_USERID = os.environ.get("TELEGRAM_USERID")
+PROXY = os.environ.get("LINUXDO_PROXY", "").strip()
 
 HOME_URL = "https://linux.do/"
 LATEST_URL = "https://linux.do/latest"
@@ -91,12 +92,21 @@ class LinuxDoBrowser:
             .incognito(True)
             .set_argument("--no-sandbox")
         )
+
+        if PROXY:
+            logger.info(f"浏览器使用代理: {PROXY}")
+            co.set_proxy(PROXY)
+
         co.set_user_agent(
             f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
         self.browser = Chromium(co)
         self.page = self.browser.new_tab()
-        self.session = requests.Session()
+        if PROXY:
+            self.session = requests.Session(proxy=PROXY)
+        else:
+            self.session = requests.Session()
+            
         self.session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
